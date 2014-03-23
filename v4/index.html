@@ -1,0 +1,487 @@
+<!doctype html>
+<html charset="utf8">
+<head>
+  <meta http-equiv="content-type" content="text/html; charset=UTF-8">
+  <title>Bank-statistik</title>
+
+  <script type='text/javascript' src='angular.js'></script>
+  <script src="ui-bootstrap-tpls-0.10.0.js"></script>
+  <script src="angularjs-nvd3-directives.js"></script>
+  <script src="d3.js"></script>
+  <script src="nv.d3.js"></script>
+  <script src="moment.js"></script>
+  <script type='text/javascript' src="https://code.jquery.com/jquery-1.10.2.min.js"></script>
+  <script type='text/javascript' src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script>  
+
+  <link rel="stylesheet" type="text/css" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css">
+  <link rel="stylesheet" type="text/css" href="nv.d3.css">
+
+  <style type='text/css'>
+
+  p, label, button, table, td, span {
+    font-family:'arial';
+  }
+
+  .label {
+    font-weight: normal;
+  }
+
+  .account-table td {
+    padding: 12px !important;
+  }
+  .account-table td:nth-child(1) {
+    width: 170px;
+  }
+  .account-table td:nth-child(2) span {
+    cursor: pointer;
+  }
+  .account-table td:nth-child(3) {
+    width: 230px;
+  }
+  .account-table td:nth-child(4) {
+    width: 170px;
+  }
+
+  </style>
+
+  <script>
+  angular.module('BankStatistics', ['ui.bootstrap', 'nvd3ChartDirectives'])
+  .controller('MainController', function($scope, $modal, $log) {
+    var d = function(dbg) {
+      $scope.debug += dbg + " ";
+    };
+    $scope.debug = "";
+
+    $scope.raw = "";
+    $scope.rows = [];
+    $scope.parsed = [];
+
+    $scope.years = [];
+
+    $scope.chartData = {};
+
+    $scope.groups = JSON.parse(localStorage.getItem('transactionGroups')) || {};
+
+    $scope.parsers = [{
+      name: 'Swedbank', 
+      method: function(row) {
+        var cols = row.split(/\t/);
+        if (cols.length != 6) return;
+        if (!Date.parse("20"+cols[0])) return;
+
+        var itm = 
+        {
+          dateMade: new Date(Date.parse("20"+cols[0].trim())),  // 13-01-17 --> 2013-01-17
+          dateTrans: new Date(Date.parse("20"+cols[1].trim())),
+          msg: cols[2].trim(),
+          amount: parseFloat(cols[4].replace(' ', '').replace(',', '.').trim()), // 1 234,56 --> 1234.56
+          result: parseFloat(cols[5].replace(' ', '').replace(',', '.').trim())
+        }
+        return itm;
+      }
+    },
+    {
+      name: 'Handelsbanken', 
+      method: function(row) {
+        var cols = row.split(/\t \t/);
+        if (cols.length != 5) return;
+        if (!Date.parse(cols[1])) return;
+
+        var itm = 
+        {
+          dateMade: new Date(Date.parse(cols[1].trim())),
+          dateTrans: cols[0].trim().length > 0 ? new Date(Date.parse(cols[0].trim())) : new Date(),
+          msg: cols[2].trim(),
+          amount: parseFloat(cols[3].replace(' ', '').replace(',', '.').trim()), // 1 234,56 --> 1234.56
+          result: parseFloat(cols[4].replace(' ', '').replace(',', '.').trim())
+        }
+        return itm;
+      }
+    },
+    {
+      name: 'Skandiabanken', 
+      method: function(row) {
+        var cols = row.split(/\t/);
+        if (cols.length != 4) return;
+        if (!Date.parse(cols[0])) return;
+
+        var itm = 
+        {
+          dateMade: new Date(Date.parse(cols[0].trim())),
+          //dateTrans: cols[0].trim().length > 0 ? new Date(Date.parse(cols[0].trim())) : new Date(),
+          msg: cols[1].trim(),
+          amount: parseFloat(cols[2].replace(' ', '').replace(',', '.').trim()), // 1 234,56 --> 1234.56
+          result: parseFloat(cols[3].replace(' ', '').replace(',', '.').trim())
+        }
+        return itm;
+      }
+    }];
+
+    $scope.selected = {
+      parser: $scope.parsers[0]
+    };
+
+    $scope.parseRaw = function(raw) {
+      $scope.rows.length = 0;
+      $scope.parsed.length = 0;
+      $scope.rows = raw.split(/\n/);
+
+      angular.forEach($scope.rows, function(row) {
+        var itm = $scope.selected.parser.method(row);
+        if (itm) {
+          $scope.parsed.push(itm);
+          var year = itm.dateMade.getFullYear();
+          if ($scope.years.indexOf(year) < 0) {
+            $scope.years.push(year);
+          }
+        }
+      });
+
+      $scope.years.sort(function(a,b){return a<b;});
+    };
+
+    $scope.chartDataIncomeExpenses = function(items, id) {
+      $scope.chartData[id] = $scope.chartData[id] || [ {key:'Inkomster', values:[]}, {key:'Utgifter', values:[]} ];
+      $scope.chartData[id][0].values.length = 0;
+      $scope.chartData[id][1].values.length = 0;
+
+      var sumIn = 0, sumOut = 0;
+
+
+      for(var i = 0; i < items.length; i++) {
+        var itm = items[i];
+        //if (itm.msg.indexOf('para') >= 0) continue;
+        //var day = parseInt(moment(itm.dateMade).dayOfYear());
+
+        if (itm.amount >= 0) { sumIn += itm.amount; } 
+        else { sumOut -= itm.amount; }
+        $scope.chartData[id][0].values.push( [ i, sumIn ] );
+        $scope.chartData[id][1].values.push( [ i, sumOut ] );
+      };
+
+      return $scope.chartData[id];
+    };
+
+    $scope.chartDataBalance = function(items, id) {
+      $scope.chartData[id] = $scope.chartData[id] || [ {key:'Balans', values:[]} ];
+      $scope.chartData[id][0].values.length = 0;
+
+      for(var i = 0; i < items.length; i++) {
+        var itm = items[i];
+        //if (itm.msg.indexOf('para') >= 0) continue;
+        //var day = parseInt(moment(itm.dateMade).dayOfYear());
+        $scope.chartData[id][0].values.push( [ i, itm.result ] );
+      };
+
+      return $scope.chartData[id];
+    };
+
+    $scope.chartColor = function(arr) {
+      return function(d, i) {
+        return arr[i];
+      }
+    }
+
+    $scope.yearMatch = function(year) {
+      return function(itm) {
+        return itm.dateMade.getFullYear() == year;
+      }
+    };
+    $scope.monthMatch = function(month) {
+      return function(itm) {
+        return itm.dateMade.getMonth() == month;
+      }
+    };
+
+    $scope.sumPositive = function(items) {
+      var sum = 0;
+      angular.forEach(items, function(itm) {
+        sum += itm.amount > 0 ? itm.amount : 0;
+      });
+      return sum;
+    }
+    $scope.sumNegative = function(items) {
+      var sum = 0;
+      angular.forEach(items, function(itm) {
+        sum += itm.amount < 0 ? itm.amount : 0;
+      });
+      return sum;
+    }
+
+    $scope.openTransationGroupManager = function(msg) {
+      var modalInstance = $modal.open({
+        templateUrl: 'transactionGroupManager.html',
+        controller: 'GroupManagerInstanceCtrl',
+        resolve: {
+          groups: function () {
+            return $scope.groups;
+          },
+          msg: function() {
+            return msg;
+          }
+        }
+      });
+
+      modalInstance.result.then(function (result) {
+        if (result.msg && result.selectedGroup && $scope.groups[result.selectedGroup].indexOf(result.msg) == -1) {
+          $scope.groups[result.selectedGroup].push(result.msg);
+          localStorage.setItem("transactionGroups", angular.toJson($scope.groups));
+        }
+      });
+    };
+
+  })
+.directive('itmRow', function() {
+  return {
+    restrict: 'E',
+    templateUrl: 'itmRow.html'
+  }
+})
+.directive('price', function() {
+  return {
+    restrict: 'E',
+    scope: {
+      amount: '='
+    },
+    templateUrl: 'price.html',
+    controller: function($scope) {
+      $scope.amountToFontSize = function(amount) {
+        return 8 + Math.log(Math.abs(amount) ) * 1.7;
+      }
+    }
+  }
+})
+.controller('GroupManagerInstanceCtrl', function($scope, $modalInstance, groups, msg) {
+  $scope.msg = msg;
+  $scope.groups = groups;
+  $scope.selected = {
+    group: ''
+  };
+  $scope.create = {
+    groupName: ''
+  }
+
+  $scope.createGroup = function() {
+    if (!groups[$scope.create.groupName] && $scope.create.groupName.length > 0) {
+      groups[$scope.create.groupName] = [];
+    }
+    $scope.selected.group = $scope.create.groupName;
+    $scope.create.groupName = '';
+  }
+
+  $scope.deleteGroup = function(grp) {
+    delete $scope.groups[grp];
+  }
+
+  $scope.ok = function () {
+    $modalInstance.close({msg: $scope.msg, selectedGroup: $scope.selected.group});
+  };
+
+  $scope.cancel = function () {
+    $modalInstance.dismiss('cancel');
+  };
+
+})
+</script>
+</head>
+<body ng-app="BankStatistics">
+
+  <div class="container" ng-controller="MainController">
+
+    <h1><a href="index.html">Bank-statistik</a></h1>
+    <br style="clear:both;"/>
+    <div class="well row">
+      <div class="span10 offset1">
+
+        <div ng-show="parsed.length == 0">
+          <label class="pull-left" style="margin-top: 10px; margin-right: 16px;">Välj din bank: </label>
+          <ul class="nav nav-pills pull-left">
+            <li ng-class="{active: parser == selected.parser}" ng-click="selected.parser = parser; parseRaw(raw);" 
+            ng-repeat="parser in parsers"><a href="#">{{parser.name}}</a></li>
+          </ul>
+          <br style="clear:both"/>
+        </div>
+
+        <br/>
+
+        <p class="alert alert-success">All beräkning och statistik sker lokalt i din webbläsare. Bankinfomationen skickas ingenstans.</p>
+        <p class="alert alert-info" ng-show="parsed.length == 0" >I Swedbank, klicka <strong>"Visa alla"</strong> och <strong>"Hämta fler"</strong> två
+          gånger.
+          <br/>Kopiera sedan hela sidan <span class="badge badge-inverse">Ctrl + A</span> och
+          klistra in här <span class="badge badge-inverse">Ctrl + V</span> :
+        </p>
+        <textarea ng-show="parsed.length == 0" ng-model="raw" ng-paste="parseRaw($event.clipboardData.getData('text/plain'))" style="width:100%;height: 7em;"></textarea>
+
+        <p class="pull-right">Skapad av <a href="https://plus.google.com/+JohanDeckmar" title="Johan Deckmar Google+ Profile">Johan Deckmar</a> &copy; 2014</p>
+      </div>
+
+    </div>
+
+    <div ng-if="parsed.length != 0">
+      <h1>Kontobalans <span style="color:#666;font-size:0.6em;">{{parsed[parsed.length-1].dateMade | date: 'MMM yyyy'}} - {{parsed[0].dateMade | date: 'MMM yyyy'}}</span></h1>
+
+      <nvd3-stacked-area-chart
+          data="chartDataBalance((parsed | orderBy: 'dateMade'), 'total_chart_balance')"
+          id="total_chart_balance"
+          showXAxis="false"
+          showYAxis="true"
+          showLegend="true"
+          width="1000"
+          height="400"
+          margin="{left:90, top:0, right:0, bottom:0}"
+          showControls="false"
+          offset="wiggle">
+            <svg></svg>
+      </nvd3-stacked-area-chart>
+
+      <h1>Kontoflöden <span style="color:#666;font-size:0.6em;">{{parsed[parsed.length - 1].dateMade | date: 'MMM yyyy'}} - {{parsed[0].dateMade | date: 'MMM yyyy'}}</span></h1>
+
+      <nvd3-multi-bar-chart
+          data="chartDataIncomeExpenses((parsed | orderBy: 'dateMade'), 'total_chart_incexp')"
+          id="total_chart_incexp"
+          showXAxis="false"
+          showYAxis="true"
+          showLegend="false"
+          showControls="true"
+          width="1000"
+          height="400"
+          color="chartColor(['#009900', '#990000'])"
+          margin="{left:90, top:0, right:0, bottom:0}">
+            <svg></svg>
+      </nvd3-multi-bar-chart>
+
+      <!-- Sumarize transaction groups for this month -->
+      <div ng-show="sumsTot" ng-init="sumsTot = sumsTot || {};">
+        <h1>Grupp-summering  <span style="color:#666;font-size:0.6em;">{{parsed[parsed.length - 1].dateMade | date: 'MMM yyyy'}} - {{parsed[0].dateMade | date: 'MMM yyyy'}}</span></h1>
+        <div ng-repeat="(grpName, grpMembers) in groups" ng-init="sumsTot[grpName] = {};" ng-show="sumsTot[grpName].total" class="well pull-left">
+          <label>{{grpName}}</label> <price class="pull-right" amount="sumsTot[grpName].total"></price>
+          <br style="clear:both;"/>
+          <div ng-repeat="member in grpMembers">
+            <span ng-show="sumsTot[grpName][member]"><em>{{member}}</em> &nbsp; {{sumsTot[grpName][member] | currency}}</span>
+
+            <!-- Only loop through to sum matching items using ng-init -->
+            <span ng-repeat="itm in parsed | filter: {msg: member}" 
+            ng-init="sumsTot[grpName].total = sumsTot[grpName].total + itm.amount; sumsTot[grpName][member] = itm.amount + sumsTot[grpName][member];" 
+            ng-show="false"></span>
+          </div>
+        </div>
+        <br style="clear:both;"/>
+      </div>
+    </div>
+
+    <p class="alert alert-info" ng-show="parsed.length != 0">Klicka på en transaktion, t.ex <strong>{{parsed[0].msg}}</strong>, i tabellen nedanför för att lägga till den i en grupp av transaktioner.<br/> På så sätt kan du få en summering av belopp med liknande karaktär, och bättre översikt av dina utgifter/inkomster.</p>
+
+
+    <div class="nav nav-tabs" ng-repeat="year in years" ng-init="yearItms = (parsed | filter: yearMatch(year) )">
+      <div ng-repeat="month in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].reverse()" ng-init="monthItms = (yearItms | filter: monthMatch(month) )" ng-show="monthItms.length > 0">
+
+        <hr/>
+
+        <h2 style="text-transform: capitalize;">
+          {{monthItms[0].dateMade | date: 'MMMM'}} {{year}}
+          &nbsp; <price amount="sumPositive(monthItms)"></price>
+          &nbsp; <price amount="sumNegative(monthItms)"></price>
+          &nbsp; = <price amount="sumPositive(monthItms) + sumNegative(monthItms)"></price>
+        </h2>
+
+        <!-- Sumarize transaction groups for this month -->
+        <div ng-repeat="(grpName, grpMembers) in groups" ng-init="sums = sums || {}; sums[grpName] = {};" ng-show="sums[grpName].total" class="well pull-left">
+          <label>{{grpName}}</label> <price class="pull-right" amount="sums[grpName].total"></price>
+          <br style="clear:both;"/>
+          <div ng-repeat="member in grpMembers">
+            <span ng-show="sums[grpName][member]"><em>{{member}}</em> &nbsp; {{sums[grpName][member] | currency}}</span>
+
+            <!-- Only loop through to sum matching items using ng-init -->
+            <span ng-repeat="itm in monthItms | filter: {msg: member}" 
+            ng-init="sums[grpName].total = sums[grpName].total + itm.amount; sums[grpName][member] = itm.amount + sums[grpName][member];" 
+            ng-show="false"></span>
+          </div>
+        </div>
+
+        <br style="clear:both;"/>
+
+        <nvd3-multi-bar-chart
+            data="chartDataIncomeExpenses(monthItms, 'month_chart_'+year+'_'+month)"
+            id="month_chart_{{year}}_{{month}}"
+            showXAxis="false"
+            showYAxis="true"
+            showLegend="false"
+            width="1000"
+            height="300"
+            margin="{left:90, top:0, right:0, bottom:0}"
+            showControls="true"
+            color="chartColor(['#009900', '#990000'])"
+            offset="wiggle">
+              <svg></svg>
+        </nvd3-multi-bar-chart>
+
+        <table class="table table-hover table-striped account-table">
+          <thead>
+            <tr>
+              <th>Dag</th>
+              <th>Meddelande</th>
+              <th>Belopp</th>
+              <th>Konto</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr ng-repeat="itm in monthItms | orderBy: 'dateMade'">
+              <td><span Popover-animation="true" popover-trigger="mouseenter" popover-placement="right" popover="{{itm.dateMade | date:'shortDate'}}">{{itm.dateMade | date:'d EEEE'}}</span></td>
+              <td>
+                <span ng-click="openTransationGroupManager(itm.msg)">{{itm.msg}}</span>
+              </td>
+              <td>
+                <price amount="itm.amount"></price>
+              </td>
+              <td>{{itm.result | currency}}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <script type="text/ng-template" id="price.html">
+      <span class="label" 
+      ng-class="{true:'label-success', false:'label-danger'}[amount >= 0]"
+      ng-style="{'font-size': (amountToFontSize(amount) + 'px')}">
+      {{amount | currency}}
+    </span>
+  </script>
+
+  <script type="text/ng-template" id="transactionGroupManager.html">
+    <div class="modal-content">
+      <div class="modal-header">
+        <button type="button" class="close">&times;</button>
+        <h4 class="modal-title" style="font-style:normal">Gruppera transaktioner</h4>
+      </div>
+      <div class="modal-body">
+
+        <input type="text" ng-model="create.groupName" placeholder="Ex: Jobbluncher, Hushållsinköp" style="width: 250px;" />
+        <button class="btn btn-success" ng-click="createGroup()">Skapa grupp</button>
+
+        <hr/>
+
+        Lägg till <strong>{{msg}}</strong> i: <select ng-model="selected.group" ng-options="group as group for (group, members) in groups"></select>
+
+        <hr/>
+
+        <ul ng-repeat="(group, members) in groups">
+          <li>{{group}} <span style="cursor:pointer;" class="glyphicon glyphicon-remove" ng-click="deleteGroup(group)"> </span> </li>
+          <ul ng-repeat="member in members">
+            <li>{{member}} <span style="cursor:pointer;" class="glyphicon glyphicon-remove" ng-click="members.splice(members.indexOf(member), 1)"> </span> </li>
+          </ul>
+        </ul>
+
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-default" ng-click="cancel()">Avbryt</button>
+        <button type="button" class="btn btn-primary" ng-click="ok()">Ok</button>
+      </div>
+    </div>
+  </script>
+
+</div>
+
+</body>
+</html>
+
